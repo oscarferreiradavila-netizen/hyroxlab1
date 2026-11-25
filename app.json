@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "HyroxLab",
+    "slug": "hyroxlab",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0F172A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hyroxlab.training"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A"
+      },
+      "package": "com.hyroxlab.training"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "HyroxLab",
+      "shortName": "HyroxLab",
+      "themeColor": "#0F172A",
+      "backgroundColor": "#0F172A",
+      "display": "standalone"
+    },
+    "plugins": [
+      "expo-asset"
+    ],
+    "experiments": {
+      "baseUrl": "/hyroxlab"
+    }
+  }
+}
