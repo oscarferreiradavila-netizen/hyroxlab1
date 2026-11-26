@@ -21,3 +21,8 @@ export function wattsToBikeKmh(watts?: number): number | null {
   const kmh = 7.2 * Math.pow(watts / 2.8, 1 / 3);
   return Math.round(kmh * 10) / 10;
 }
+
+export function pace500mToWatts(secPer500?: number): number | null {
+  if (!secPer500 || secPer500 <= 0) return null;
+  return Math.round(2.8 / Math.pow(secPer500 / 500, 3));
+}

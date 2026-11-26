@@ -12,7 +12,7 @@ import {
 import { Play, Pause, RotateCcw, Check, Plus, Minus, Flag, ArrowLeft } from 'lucide-react-native';
 import { useTrainingStore } from '../store/useTrainingStore';
 import { showAlert } from '../utils/alert';
-import { wattsToBikeKmh, wattsToRow500mSec, formatPace500m } from '../utils/ergMath';
+import { wattsToBikeKmh, wattsToRow500mSec, formatPace500m, pace500mToWatts } from '../utils/ergMath';
 import { analyzePostWorkoutImpressions } from '../services/geminiCoach';
 
 const QUICK_FEELINGS = [
@@ -227,6 +227,13 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({ onBackToToday }) =
               const durMin = Math.floor(currentDurationSec / 60);
               const durSec = currentDurationSec % 60;
               const isDone = set.completed;
+              const isRowOrSki =
+                set.exerciseName.toLowerCase().includes('remo') ||
+                set.exerciseName.toLowerCase().includes('row') ||
+                set.exerciseName.toLowerCase().includes('ski');
+              const paceSec = wattsToRow500mSec(currentWatts) || 120;
+              const paceMin = Math.floor(paceSec / 60);
+              const paceRemSec = paceSec % 60;
 
               return (
                 <View
@@ -321,8 +328,65 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({ onBackToToday }) =
                       </View>
                     </View>
 
-                    {/* Control de Vatios (para Bici/Remo/SkiErg) */}
-                    {set.targetWatts !== undefined && (
+                    {/* Control de Ritmo /500m (Remo/SkiErg) */}
+                    {set.targetWatts !== undefined && isRowOrSki && (
+                      <View style={styles.metricAdjustBox}>
+                        <Text style={styles.metricAdjustLabel}>RITMO (/500M)</Text>
+                        <View style={styles.adjustRow}>
+                          <TouchableOpacity
+                            style={styles.adjustButtonSmall}
+                            onPress={() => {
+                              const nextW = pace500mToWatts(Math.max(70, paceSec - 2));
+                              if (nextW) updateActiveSet(bIdx, sIdx, { actualWattsAvg: nextW });
+                            }}
+                          >
+                            <Minus size={16} color="#F8FAFC" />
+                          </TouchableOpacity>
+                          <View style={styles.timeInputRow}>
+                            <TextInput
+                              style={[styles.timeNumericInput, { width: 38, color: '#38BDF8' }]}
+                              value={paceMin.toString()}
+                              onChangeText={(txt) => {
+                                const m = Math.max(0, parseInt(txt, 10) || 0);
+                                const nextW = pace500mToWatts(m * 60 + paceRemSec);
+                                if (nextW) updateActiveSet(bIdx, sIdx, { actualWattsAvg: nextW });
+                              }}
+                              keyboardType="numeric"
+                              maxLength={2}
+                            />
+                            <Text style={styles.timeColon}>:</Text>
+                            <TextInput
+                              style={[styles.timeNumericInput, { width: 42, color: '#38BDF8' }]}
+                              value={paceRemSec.toString().padStart(2, '0')}
+                              onChangeText={(txt) => {
+                                const s = Math.min(59, Math.max(0, parseInt(txt, 10) || 0));
+                                const nextW = pace500mToWatts(paceMin * 60 + s);
+                                if (nextW) updateActiveSet(bIdx, sIdx, { actualWattsAvg: nextW });
+                              }}
+                              keyboardType="numeric"
+                              maxLength={2}
+                            />
+                          </View>
+                          <TouchableOpacity
+                            style={styles.adjustButtonSmall}
+                            onPress={() => {
+                              const nextW = pace500mToWatts(paceSec + 2);
+                              if (nextW) updateActiveSet(bIdx, sIdx, { actualWattsAvg: nextW });
+                            }}
+                          >
+                            <Plus size={16} color="#F8FAFC" />
+                          </TouchableOpacity>
+                        </View>
+                        {currentWatts !== undefined && currentWatts > 0 && (
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginTop: 4 }}>
+                            {currentWatts} W
+                          </Text>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Control de Potencia (W) para Bici */}
+                    {set.targetWatts !== undefined && !isRowOrSki && (
                       <View style={styles.metricAdjustBox}>
                         <Text style={styles.metricAdjustLabel}>POTENCIA (W)</Text>
                         <View style={styles.adjustRow}>
@@ -354,9 +418,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({ onBackToToday }) =
                         </View>
                         {currentWatts !== undefined && currentWatts > 0 && (
                           <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginTop: 4 }}>
-                            {set.exerciseName.toLowerCase().includes('bici') || set.exerciseName.toLowerCase().includes('bike')
-                              ? `~${wattsToBikeKmh(currentWatts)} km/h`
-                              : formatPace500m(wattsToRow500mSec(currentWatts))}
+                            ~{wattsToBikeKmh(currentWatts)} km/h
                           </Text>
                         )}
                       </View>

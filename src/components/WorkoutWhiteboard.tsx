@@ -79,12 +79,14 @@ export const WorkoutWhiteboard: React.FC<WorkoutWhiteboardProps> = ({
                     s.exerciseName.toLowerCase().includes('row') ||
                     s.exerciseName.toLowerCase().includes('ski');
 
-                  const extraPace =
+                  const wattsDisplay =
                     s.targetWatts && isBike
-                      ? ` (~${wattsToBikeKmh(s.targetWatts)} km/h)`
+                      ? `~${wattsToBikeKmh(s.targetWatts)} km/h (${s.targetWatts} W)`
                       : s.targetWatts && isRowOrSki
-                      ? ` (${formatPace500m(wattsToRow500mSec(s.targetWatts))})`
-                      : '';
+                      ? `${formatPace500m(wattsToRow500mSec(s.targetWatts))} (${s.targetWatts} W)`
+                      : s.targetWatts
+                      ? `${s.targetWatts} W`
+                      : null;
 
                   return (
                     <View key={s.id || sIdx} style={styles.setLine}>
@@ -114,9 +116,9 @@ export const WorkoutWhiteboard: React.FC<WorkoutWhiteboardProps> = ({
                             {s.targetWeightKg} kg
                           </Text>
                         )}
-                        {s.targetWatts !== undefined && (
+                        {wattsDisplay && (
                           <Text style={[styles.targetChip, styles.targetWatts]}>
-                            {s.targetWatts} W{extraPace}
+                            {wattsDisplay}
                           </Text>
                         )}
                         {s.targetPacePer100m && (

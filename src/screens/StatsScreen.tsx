@@ -284,6 +284,16 @@ export const StatsScreen: React.FC = () => {
               </ScrollView>
             )}
 
+            {rowPaceChartData.length > 0 && (
+              <ProgressChart
+                title={`Ritmo cada 500m: ${activeChartName}`}
+                subtitle="Minutos y segundos cada 500 metros (min:seg /500m)"
+                data={rowPaceChartData}
+                higherIsBetter={false}
+                accentColor="#F59E0B"
+              />
+            )}
+
             {weightChartData.length > 0 && (
               <ProgressChart
                 title={`Progresión de Peso: ${activeChartName}`}
@@ -684,13 +694,15 @@ export const StatsScreen: React.FC = () => {
                   </Text>
                 </View>
                 <View style={styles.powerItem}>
-                  <Text style={styles.powerLabel}>POTENCIA REMO (5 min / 2k)</Text>
-                  <Text style={styles.powerWatts}>{profile.rowFtpWatts} W</Text>
-                  <Text style={[styles.powerZ2, { color: '#F59E0B', fontWeight: '800', marginBottom: 2 }]}>
+                  <Text style={styles.powerLabel}>RITMO REMO (5 min / 2k)</Text>
+                  <Text style={[styles.powerWatts, { color: '#F59E0B' }]}>
                     {formatPace500m(wattsToRow500mSec(profile.rowFtpWatts))}
                   </Text>
+                  <Text style={[styles.powerZ2, { color: '#10B981', fontWeight: '800', marginBottom: 2 }]}>
+                    {profile.rowFtpWatts} W medios
+                  </Text>
                   <Text style={styles.powerZ2}>
-                    Z2: {Math.round(profile.rowFtpWatts * 0.68)} W ({formatPace500m(wattsToRow500mSec(Math.round(profile.rowFtpWatts * 0.68)))})
+                    Z2: {formatPace500m(wattsToRow500mSec(Math.round(profile.rowFtpWatts * 0.68)))} ({Math.round(profile.rowFtpWatts * 0.68)} W)
                   </Text>
                 </View>
               </View>
