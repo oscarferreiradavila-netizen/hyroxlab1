@@ -1,6 +1,41 @@
 import { Workout, UserProfile, ChatMessage, StatEntry, PersonalRecord } from '../types/training';
 import { generatePrescribedWorkout, generateInitialAssessmentWorkout } from './workoutGenerator';
 
+async function callGroqApi(
+  apiKey: string,
+  systemText: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  maxTokens = 1600
+): Promise<{ ok: boolean; model?: string; text?: string; error?: string }> {
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          ...(systemText ? [{ role: 'system', content: systemText }] : []),
+          ...messages,
+        ],
+        temperature: 0.5,
+        max_tokens: maxTokens,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content || '';
+      return { ok: true, model: 'groq-llama-3.3-70b', text };
+    }
+    const errBody = await res.text();
+    return { ok: false, error: `HTTP ${res.status}: ${errBody.slice(0, 140)}` };
+  } catch (e: any) {
+    return { ok: false, error: `Error de red: ${e?.message || 'Sin conexión'}` };
+  }
+}
+
 async function callGeminiApi(
   apiKey: string,
   payload: Record<string, unknown>
@@ -59,6 +94,51 @@ export async function askGeminiCoach(
   }
 
   const apiKey = profile.geminiApiKey.trim();
+
+  // Soporte directo para Groq (gsk_...) 100% gratis sin tarjeta
+  if (apiKey.startsWith('gsk_')) {
+    const groqMessages = [
+      ...chatHistory
+        .filter((m) => m.sender === 'user' || m.sender === 'coach')
+        .slice(-10)
+        .map((m) => ({
+          role: (m.sender === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.text,
+        })),
+      { role: 'user' as const, content: userMessage },
+    ];
+    const groqRes = await callGroqApi(apiKey, systemInstruction, groqMessages, 1600);
+    if (!groqRes.ok) {
+      return generateLocalFallbackResponse(
+        userMessage,
+        profile,
+        recentWorkouts,
+        statEntries,
+        `(Nota: error con Groq ${groqRes.error}, usando entrenador local)`
+      );
+    }
+    const rawContent = groqRes.text || '';
+    const jsonMatch = rawContent.match(/```json\s*([\s\S]*?)\s*```/);
+    let parsedWorkout: Workout | undefined = undefined;
+    if (jsonMatch && jsonMatch[1]) {
+      try {
+        const rawJson = JSON.parse(jsonMatch[1]);
+        parsedWorkout = {
+          ...rawJson,
+          id: 'ai_' + Date.now(),
+          status: 'planned',
+          scheduledDate: new Date().toISOString().split('T')[0],
+          generatedByAi: true,
+        };
+      } catch (err) {
+        console.warn('Could not parse workout JSON:', err);
+      }
+    }
+    return {
+      text: rawContent.replace(/```json[\s\S]*?```/, '').trim() || 'Aquí tienes tu sesión para hoy.',
+      workout: parsedWorkout,
+    };
+  }
 
   // Memoria de entrenamientos recientes (qué ha hecho y cómo se ha sentido)
   const historySummary = recentWorkouts
@@ -298,6 +378,51 @@ export async function analyzePostWorkoutImpressions(
 
   const apiKey = profile.geminiApiKey.trim();
 
+  // Soporte directo para Groq (gsk_...) 100% gratis sin tarjeta
+  if (apiKey.startsWith('gsk_')) {
+    const groqMessages = [
+      ...chatHistory
+        .filter((m) => m.sender === 'user' || m.sender === 'coach')
+        .slice(-10)
+        .map((m) => ({
+          role: (m.sender === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.text,
+        })),
+      { role: 'user' as const, content: userMessage },
+    ];
+    const groqRes = await callGroqApi(apiKey, systemInstruction, groqMessages, 1600);
+    if (!groqRes.ok) {
+      return generateLocalFallbackResponse(
+        userMessage,
+        profile,
+        recentWorkouts,
+        statEntries,
+        `(Nota: error con Groq ${groqRes.error}, usando entrenador local)`
+      );
+    }
+    const rawContent = groqRes.text || '';
+    const jsonMatch = rawContent.match(/```json\s*([\s\S]*?)\s*```/);
+    let parsedWorkout: Workout | undefined = undefined;
+    if (jsonMatch && jsonMatch[1]) {
+      try {
+        const rawJson = JSON.parse(jsonMatch[1]);
+        parsedWorkout = {
+          ...rawJson,
+          id: 'ai_' + Date.now(),
+          status: 'planned',
+          scheduledDate: new Date().toISOString().split('T')[0],
+          generatedByAi: true,
+        };
+      } catch (err) {
+        console.warn('Could not parse workout JSON:', err);
+      }
+    }
+    return {
+      text: rawContent.replace(/```json[\s\S]*?```/, '').trim() || 'Aquí tienes tu sesión para hoy.',
+      workout: parsedWorkout,
+    };
+  }
+
   const prompt = `Eres el Entrenador Personal de ${profile.name} (política estricta Cero Impacto, nivel ${profile.fitnessLevel || 'intermedio'}, Semana ${profile.progressionWeek || 1}).
 El atleta acaba de terminar el entrenamiento "${workout.title}" (${workout.durationMin} min) con un RPE percibido de ${rpe}/10.
 Sus impresiones/sensaciones escritas al terminar son: "${notes || 'Sin comentarios adicionales'}".
@@ -307,10 +432,12 @@ Responde en 2-3 frases directas, empáticas y técnicas en español:
 2) Dale un consejo práctico de recuperación o técnica.
 3) Dile cómo vas a adaptar su próximo entrenamiento en base a estas sensaciones.`;
 
-  const result = await callGeminiApi(apiKey, {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
-  });
+  const result = apiKey.startsWith('gsk_')
+    ? await callGroqApi(apiKey, '', [{ role: 'user', content: prompt }], 300)
+    : await callGeminiApi(apiKey, {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
+      });
 
   if (result.ok && result.text?.trim()) {
     return result.text.trim();
@@ -324,10 +451,17 @@ export async function testGeminiConnection(apiKey: string): Promise<{ ok: boolea
   if (!cleanKey) {
     return { ok: false, message: 'La casilla de la API Key está vacía.' };
   }
+  if (cleanKey.startsWith('gsk_')) {
+    const groqTest = await callGroqApi(cleanKey, '', [{ role: 'user', content: 'Responde solo: OK' }], 10);
+    if (groqTest.ok) {
+      return { ok: true, message: `¡Conectado con éxito usando ${groqTest.model}!` };
+    }
+    return { ok: false, message: groqTest.error || 'No se pudo conectar con Groq.' };
+  }
   if (!cleanKey.startsWith('AIza') && !cleanKey.startsWith('AQ.')) {
     return {
       ok: false,
-      message: `La clave de Gemini debe empezar por "AIza..." o "AQ." (la tuya empieza por "${cleanKey.slice(0, 6)}...").`,
+      message: `La clave debe empezar por "AIza...", "AQ." (Gemini) o "gsk_" (Groq gratis).`,
     };
   }
 
