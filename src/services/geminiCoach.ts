@@ -15,7 +15,7 @@ export async function askGeminiCoach(
   }
 
   const apiKey = profile.geminiApiKey.trim();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
   // Memoria de entrenamientos recientes (qué ha hecho y cómo se ha sentido)
   const historySummary = recentWorkouts
@@ -114,28 +114,38 @@ REGLAS VITALES E INQUEBRANTABLES:
   ];
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemInstruction }] },
-        contents: conversationPayload,
-        generationConfig: {
-          temperature: 0.5,
-          maxOutputTokens: 1600,
-        },
-      }),
-    });
+    let res: Response | null = null;
+    let lastErr = '';
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.warn('Gemini API Error:', res.status, errText);
+    for (const modelName of modelsToTry) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents: conversationPayload,
+          generationConfig: {
+            temperature: 0.5,
+            maxOutputTokens: 1600,
+          },
+        }),
+      });
+
+      if (res.ok) break;
+      const errBody = await res.text();
+      lastErr = `${res.status}: ${errBody.slice(0, 120)}`;
+      if (res.status !== 404) break;
+    }
+
+    if (!res || !res.ok) {
+      console.warn('Gemini API Error:', lastErr);
       return generateLocalFallbackResponse(
         userMessage,
         profile,
         recentWorkouts,
         statEntries,
-        `(Nota: error de conexión con Gemini ${res.status}, usando entrenador inteligente local)`
+        `(Nota: error de conexión con Gemini ${lastErr}, usando entrenador local)`
       );
     }
 
@@ -271,7 +281,7 @@ export async function analyzePostWorkoutImpressions(
   }
 
   const apiKey = profile.geminiApiKey.trim();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
   const prompt = `Eres el Entrenador Personal de ${profile.name} (política estricta Cero Impacto, nivel ${profile.fitnessLevel || 'intermedio'}, Semana ${profile.progressionWeek || 1}).
 El atleta acaba de terminar el entrenamiento "${workout.title}" (${workout.durationMin} min) con un RPE percibido de ${rpe}/10.
@@ -283,21 +293,56 @@ Responde en 2-3 frases directas, empáticas y técnicas en español:
 3) Dile cómo vas a adaptar su próximo entrenamiento en base a estas sensaciones.`;
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
-      }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (reply) return reply;
+    for (const modelName of modelsToTry) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (reply) return reply;
+      }
+      if (res.status !== 404) break;
+    }
   } catch (e) {
     console.warn('Error analyzing post-workout impressions with Gemini:', e);
   }
 
   return `¡Buen trabajo hoy, ${profile.name}! He guardado tus sensaciones (RPE ${rpe}/10) en tu memoria de entrenamiento para adaptar la próxima sesión.`;
+}
+
+export async function testGeminiConnection(apiKey: string): Promise<{ ok: boolean; message: string }> {
+  const cleanKey = apiKey.trim();
+  if (!cleanKey) {
+    return { ok: false, message: 'La casilla de la API Key está vacía.' };
+  }
+  for (const modelName of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${cleanKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'Responde solo: OK' }] }],
+          generationConfig: { maxOutputTokens: 10 },
+        }),
+      });
+      if (res.ok) {
+        return { ok: true, message: `¡Conectado con éxito usando ${modelName}!` };
+      }
+      const errText = await res.text();
+      if (res.status !== 404) {
+        return { ok: false, message: `Google rechazó la clave (HTTP ${res.status}): ${errText.slice(0, 140)}` };
+      }
+    } catch (e: any) {
+      return { ok: false, message: `Error de red: ${e?.message || 'Sin conexión'}` };
+    }
+  }
+  return { ok: false, message: 'No se encontró ningún modelo compatible de Gemini para esta clave.' };
 }

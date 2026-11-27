@@ -14,6 +14,7 @@ import { useTrainingStore } from '../store/useTrainingStore';
 import { healthKitService } from '../services/healthKitService';
 import { stravaService } from '../services/stravaService';
 import { showAlert } from '../utils/alert';
+import { testGeminiConnection } from '../services/geminiCoach';
 
 export const SettingsScreen: React.FC = () => {
   const { profile, updateProfile, addWorkout, logoutUser, activeUserId } = useTrainingStore();
@@ -28,6 +29,15 @@ export const SettingsScreen: React.FC = () => {
   const [isHealthConnected, setIsHealthConnected] = useState(false);
   const [isStravaConnected, setIsStravaConnected] = useState(false);
   const [isSyncingStrava, setIsSyncingStrava] = useState(false);
+  const [isTestingGemini, setIsTestingGemini] = useState(false);
+
+  const handleTestGemini = async () => {
+    setIsTestingGemini(true);
+    await updateProfile({ geminiApiKey: geminiApiKey.trim() });
+    const result = await testGeminiConnection(geminiApiKey);
+    setIsTestingGemini(false);
+    showAlert(result.ok ? '✅ Gemini Conectado' : '❌ Error en Gemini', result.message);
+  };
 
   const handleSaveProfile = async () => {
     await updateProfile({
@@ -207,6 +217,15 @@ export const SettingsScreen: React.FC = () => {
               autoCapitalize="none"
             />
           </View>
+          <TouchableOpacity
+            style={[styles.syncButton, { alignSelf: 'flex-start', marginTop: 4 }]}
+            onPress={handleTestGemini}
+            disabled={isTestingGemini}
+          >
+            <Text style={styles.syncButtonText}>
+              {isTestingGemini ? 'Probando...' : 'Probar y Guardar Conexión Gemini'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* INTEGRACIONES STRAVA & APPLE SALUD */}
