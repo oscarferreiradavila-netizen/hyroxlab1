@@ -7,15 +7,47 @@ async function callGroqApi(
   messages: { role: 'user' | 'assistant'; content: string }[],
   maxTokens = 1600
 ): Promise<{ ok: boolean; model?: string; text?: string; error?: string }> {
+  const cleanKey = apiKey.trim();
   try {
+    // 1. Consultar dinámicamente qué modelos tiene activos esta cuenta en Groq
+    let modelToUse = 'llama-3.1-8b-instant';
+    try {
+      const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { Authorization: `Bearer ${cleanKey}` },
+      });
+      if (modelsRes.ok) {
+        const modelsData = await modelsRes.json();
+        const available: string[] = (modelsData.data || [])
+          .map((m: any) => m.id as string)
+          .filter(
+            (id: string) =>
+              id &&
+              !id.includes('whisper') &&
+              !id.includes('guard') &&
+              !id.includes('tts') &&
+              !id.includes('playai')
+          );
+        const preferred =
+          available.find((id) => id.includes('70b')) ||
+          available.find((id) => id.includes('llama-4')) ||
+          available.find((id) => id.includes('qwen')) ||
+          available.find((id) => id.includes('gpt-oss')) ||
+          available.find((id) => id.includes('llama')) ||
+          available[0];
+        if (preferred) modelToUse = preferred;
+      }
+    } catch {
+      // Si falla el listado, seguimos con el modelo por defecto
+    }
+
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey.trim()}`,
+        Authorization: `Bearer ${cleanKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: modelToUse,
         messages: [
           ...(systemText ? [{ role: 'system', content: systemText }] : []),
           ...messages,
@@ -27,7 +59,7 @@ async function callGroqApi(
     if (res.ok) {
       const data = await res.json();
       const text = data.choices?.[0]?.message?.content || '';
-      return { ok: true, model: 'groq-llama-3.3-70b', text };
+      return { ok: true, model: `groq (${modelToUse})`, text };
     }
     const errBody = await res.text();
     return { ok: false, error: `HTTP ${res.status}: ${errBody.slice(0, 140)}` };
