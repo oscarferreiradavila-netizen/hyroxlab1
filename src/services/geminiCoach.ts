@@ -318,9 +318,15 @@ Responde en 2-3 frases directas, empáticas y técnicas en español:
 }
 
 export async function testGeminiConnection(apiKey: string): Promise<{ ok: boolean; message: string }> {
-  const cleanKey = apiKey.trim();
+  const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '');
   if (!cleanKey) {
     return { ok: false, message: 'La casilla de la API Key está vacía.' };
+  }
+  if (!cleanKey.startsWith('AIza')) {
+    return {
+      ok: false,
+      message: `La clave de Gemini siempre empieza por "AIza..." (la tuya empieza por "${cleanKey.slice(0, 6)}..."). Asegúrate de copiar la API Key desde aistudio.google.com/apikey y no el token de Strava ni un Client ID.`,
+    };
   }
   for (const modelName of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
     try {

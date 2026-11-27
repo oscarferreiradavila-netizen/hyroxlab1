@@ -213,8 +213,8 @@ export const SettingsScreen: React.FC = () => {
               onChangeText={setGeminiApiKey}
               placeholder="AIzaSy..."
               placeholderTextColor="#64748B"
-              secureTextEntry
               autoCapitalize="none"
+              autoCorrect={false}
             />
           </View>
           <TouchableOpacity
