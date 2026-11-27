@@ -1,6 +1,50 @@
 import { Workout, UserProfile, ChatMessage, StatEntry, PersonalRecord } from '../types/training';
 import { generatePrescribedWorkout, generateInitialAssessmentWorkout } from './workoutGenerator';
 
+async function callGeminiApi(
+  apiKey: string,
+  payload: Record<string, unknown>
+): Promise<{ ok: boolean; model?: string; text?: string; error?: string }> {
+  const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '');
+  const endpoints: { model: string; url: string }[] = [
+    { model: 'gemini-2.5-flash', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent' },
+    { model: 'gemini-2.0-flash', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent' },
+  ];
+
+  if (cleanKey.startsWith('AQ.')) {
+    endpoints.push(
+      { model: 'vertex-gemini-2.5-flash', url: `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cleanKey)}` },
+      { model: 'vertex-gemini-2.0-flash', url: `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(cleanKey)}` }
+    );
+  }
+
+  let lastErr = '';
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(ep.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': cleanKey,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        return { ok: true, model: ep.model, text };
+      }
+      const errBody = await res.text();
+      lastErr = `HTTP ${res.status}: ${errBody.slice(0, 140)}`;
+      if (res.status !== 404 && res.status !== 401) break;
+    } catch (e: any) {
+      lastErr = `Error de red: ${e?.message || 'Sin conexión'}`;
+      break;
+    }
+  }
+  return { ok: false, error: lastErr || 'Error desconocido' };
+}
+
 export async function askGeminiCoach(
   userMessage: string,
   profile: UserProfile,
@@ -15,7 +59,6 @@ export async function askGeminiCoach(
   }
 
   const apiKey = profile.geminiApiKey.trim();
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
   // Memoria de entrenamientos recientes (qué ha hecho y cómo se ha sentido)
   const historySummary = recentWorkouts
@@ -113,78 +156,51 @@ REGLAS VITALES E INQUEBRANTABLES:
     },
   ];
 
-  try {
-    let res: Response | null = null;
-    let lastErr = '';
+  const result = await callGeminiApi(apiKey, {
+    system_instruction: { parts: [{ text: systemInstruction }] },
+    contents: conversationPayload,
+    generationConfig: {
+      temperature: 0.5,
+      maxOutputTokens: 1600,
+    },
+  });
 
-    for (const modelName of modelsToTry) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemInstruction }] },
-          contents: conversationPayload,
-          generationConfig: {
-            temperature: 0.5,
-            maxOutputTokens: 1600,
-          },
-        }),
-      });
-
-      if (res.ok) break;
-      const errBody = await res.text();
-      lastErr = `${res.status}: ${errBody.slice(0, 120)}`;
-      if (res.status !== 404) break;
-    }
-
-    if (!res || !res.ok) {
-      console.warn('Gemini API Error:', lastErr);
-      return generateLocalFallbackResponse(
-        userMessage,
-        profile,
-        recentWorkouts,
-        statEntries,
-        `(Nota: error de conexión con Gemini ${lastErr}, usando entrenador local)`
-      );
-    }
-
-    const data = await res.json();
-    const rawContent: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    const jsonMatch = rawContent.match(/```json\s*([\s\S]*?)\s*```/);
-    let parsedWorkout: Workout | undefined = undefined;
-
-    if (jsonMatch && jsonMatch[1]) {
-      try {
-        const rawJson = JSON.parse(jsonMatch[1]);
-        parsedWorkout = {
-          ...rawJson,
-          id: 'gemini_' + Date.now(),
-          status: 'planned',
-          scheduledDate: new Date().toISOString().split('T')[0],
-          generatedByAi: true,
-        };
-      } catch (err) {
-        console.warn('Could not parse workout JSON from Gemini:', err);
-      }
-    }
-
-    const cleanText = rawContent.replace(/```json[\s\S]*?```/, '').trim();
-    return {
-      text: cleanText || 'Aquí tienes tu sesión optimizada sin impacto para hoy.',
-      workout: parsedWorkout,
-    };
-  } catch (error) {
-    console.warn('Network error calling Gemini:', error);
+  if (!result.ok) {
+    console.warn('Gemini API Error:', result.error);
     return generateLocalFallbackResponse(
       userMessage,
       profile,
       recentWorkouts,
       statEntries,
-      '(Sin red para Gemini: usando entrenador inteligente local)'
+      `(Nota: error de conexión con Gemini ${result.error}, usando entrenador local)`
     );
   }
+
+  const rawContent = result.text || '';
+
+  const jsonMatch = rawContent.match(/```json\s*([\s\S]*?)\s*```/);
+  let parsedWorkout: Workout | undefined = undefined;
+
+  if (jsonMatch && jsonMatch[1]) {
+    try {
+      const rawJson = JSON.parse(jsonMatch[1]);
+      parsedWorkout = {
+        ...rawJson,
+        id: 'gemini_' + Date.now(),
+        status: 'planned',
+        scheduledDate: new Date().toISOString().split('T')[0],
+        generatedByAi: true,
+      };
+    } catch (err) {
+      console.warn('Could not parse workout JSON from Gemini:', err);
+    }
+  }
+
+  const cleanText = rawContent.replace(/```json[\s\S]*?```/, '').trim();
+  return {
+    text: cleanText || 'Aquí tienes tu sesión optimizada sin impacto para hoy.',
+    workout: parsedWorkout,
+  };
 }
 
 function generateLocalFallbackResponse(
@@ -281,7 +297,6 @@ export async function analyzePostWorkoutImpressions(
   }
 
   const apiKey = profile.geminiApiKey.trim();
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
   const prompt = `Eres el Entrenador Personal de ${profile.name} (política estricta Cero Impacto, nivel ${profile.fitnessLevel || 'intermedio'}, Semana ${profile.progressionWeek || 1}).
 El atleta acaba de terminar el entrenamiento "${workout.title}" (${workout.durationMin} min) con un RPE percibido de ${rpe}/10.
@@ -292,26 +307,13 @@ Responde en 2-3 frases directas, empáticas y técnicas en español:
 2) Dale un consejo práctico de recuperación o técnica.
 3) Dile cómo vas a adaptar su próximo entrenamiento en base a estas sensaciones.`;
 
-  try {
-    for (const modelName of modelsToTry) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (reply) return reply;
-      }
-      if (res.status !== 404) break;
-    }
-  } catch (e) {
-    console.warn('Error analyzing post-workout impressions with Gemini:', e);
+  const result = await callGeminiApi(apiKey, {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
+  });
+
+  if (result.ok && result.text?.trim()) {
+    return result.text.trim();
   }
 
   return `¡Buen trabajo hoy, ${profile.name}! He guardado tus sensaciones (RPE ${rpe}/10) en tu memoria de entrenamiento para adaptar la próxima sesión.`;
@@ -322,33 +324,20 @@ export async function testGeminiConnection(apiKey: string): Promise<{ ok: boolea
   if (!cleanKey) {
     return { ok: false, message: 'La casilla de la API Key está vacía.' };
   }
-  if (!cleanKey.startsWith('AIza')) {
+  if (!cleanKey.startsWith('AIza') && !cleanKey.startsWith('AQ.')) {
     return {
       ok: false,
-      message: `La clave de Gemini siempre empieza por "AIza..." (la tuya empieza por "${cleanKey.slice(0, 6)}..."). Asegúrate de copiar la API Key desde aistudio.google.com/apikey y no el token de Strava ni un Client ID.`,
+      message: `La clave de Gemini debe empezar por "AIza..." o "AQ." (la tuya empieza por "${cleanKey.slice(0, 6)}...").`,
     };
   }
-  for (const modelName of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${cleanKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: 'Responde solo: OK' }] }],
-          generationConfig: { maxOutputTokens: 10 },
-        }),
-      });
-      if (res.ok) {
-        return { ok: true, message: `¡Conectado con éxito usando ${modelName}!` };
-      }
-      const errText = await res.text();
-      if (res.status !== 404) {
-        return { ok: false, message: `Google rechazó la clave (HTTP ${res.status}): ${errText.slice(0, 140)}` };
-      }
-    } catch (e: any) {
-      return { ok: false, message: `Error de red: ${e?.message || 'Sin conexión'}` };
-    }
+
+  const result = await callGeminiApi(cleanKey, {
+    contents: [{ role: 'user', parts: [{ text: 'Responde solo: OK' }] }],
+    generationConfig: { maxOutputTokens: 10 },
+  });
+
+  if (result.ok) {
+    return { ok: true, message: `¡Conectado con éxito usando ${result.model}!` };
   }
-  return { ok: false, message: 'No se encontró ningún modelo compatible de Gemini para esta clave.' };
+  return { ok: false, message: result.error || 'No se pudo conectar con Gemini.' };
 }
