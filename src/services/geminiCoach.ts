@@ -10,7 +10,7 @@ async function callGroqApi(
   const cleanKey = apiKey.trim();
   try {
     // 1. Consultar dinámicamente qué modelos tiene activos esta cuenta en Groq
-    let modelToUse = 'llama-3.1-8b-instant';
+    let candidates: string[] = ['llama-3.1-8b-instant'];
     try {
       const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
         headers: { Authorization: `Bearer ${cleanKey}` },
@@ -25,44 +25,57 @@ async function callGroqApi(
               !id.includes('whisper') &&
               !id.includes('guard') &&
               !id.includes('tts') &&
-              !id.includes('playai')
+              !id.includes('playai') &&
+              !id.includes('safeguard')
           );
-        const preferred =
-          available.find((id) => id.includes('70b')) ||
-          available.find((id) => id.includes('llama-4')) ||
-          available.find((id) => id.includes('qwen')) ||
-          available.find((id) => id.includes('gpt-oss')) ||
-          available.find((id) => id.includes('llama')) ||
-          available[0];
-        if (preferred) modelToUse = preferred;
+
+        const sorted = [
+          ...available.filter((id) => id.includes('llama-3.3') || id.includes('llama-4')),
+          ...available.filter((id) => id.includes('llama-3.1-8b')),
+          ...available.filter((id) => id.includes('qwen') || id.includes('gpt-oss')),
+          ...available,
+        ];
+        const unique = Array.from(new Set(sorted));
+        if (unique.length > 0) candidates = unique.slice(0, 4);
       }
     } catch {
       // Si falla el listado, seguimos con el modelo por defecto
     }
 
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cleanKey}`,
-      },
-      body: JSON.stringify({
-        model: modelToUse,
-        messages: [
-          ...(systemText ? [{ role: 'system', content: systemText }] : []),
-          ...messages,
-        ],
-        temperature: 0.5,
-        max_tokens: maxTokens,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.choices?.[0]?.message?.content || '';
-      return { ok: true, model: `groq (${modelToUse})`, text };
+    let lastErr = '';
+    for (const modelToUse of candidates) {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cleanKey}`,
+        },
+        body: JSON.stringify({
+          model: modelToUse,
+          messages: [
+            ...(systemText ? [{ role: 'system', content: systemText }] : []),
+            ...messages,
+          ],
+          temperature: 0.5,
+          max_tokens: maxTokens,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text =
+          data.choices?.[0]?.message?.content ||
+          data.choices?.[0]?.message?.reasoning ||
+          '';
+        if (text.trim()) {
+          return { ok: true, model: `groq (${modelToUse})`, text };
+        }
+        lastErr = `Respuesta vacía de ${modelToUse}`;
+      } else {
+        const errBody = await res.text();
+        lastErr = `HTTP ${res.status} (${modelToUse}): ${errBody.slice(0, 120)}`;
+      }
     }
-    const errBody = await res.text();
-    return { ok: false, error: `HTTP ${res.status}: ${errBody.slice(0, 140)}` };
+    return { ok: false, error: lastErr || 'Sin respuesta de Groq' };
   } catch (e: any) {
     return { ok: false, error: `Error de red: ${e?.message || 'Sin conexión'}` };
   }

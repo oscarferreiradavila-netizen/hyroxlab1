@@ -134,8 +134,14 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({ onStartWorkout }) => {
         setProposedWorkout(response.workout);
         setCoachNote(response.text);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Error in coach communication:', e);
+      await addChatMessage({
+        id: 'msg_err_' + Date.now(),
+        sender: 'coach',
+        text: `Hubo un problema al conectar con la IA (${e?.message || 'error de red'}). Inténtalo de nuevo.`,
+        timestamp: new Date().toISOString(),
+      });
     } finally {
       setIsLoading(false);
     }
@@ -307,7 +313,9 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({ onStartWorkout }) => {
         <View style={styles.chatSection}>
           <View style={styles.chatHeader}>
             <Sparkles size={18} color="#10B981" />
-            <Text style={styles.chatHeaderTitle}>Coach IA Gemini</Text>
+            <Text style={styles.chatHeaderTitle}>
+              Coach IA {profile.geminiApiKey ? '(Conectado)' : '(Modo Local)'}
+            </Text>
           </View>
 
           <View style={styles.messagesList}>
